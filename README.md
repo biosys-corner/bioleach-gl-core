@@ -40,8 +40,9 @@ Sigue estos pasos para clonar y ejecutar la visualización en tu equipo:
 1. **Clona el repositorio:**
 
    ```bash
-   git clone [https://github.com/biosys-corner/bioleaching-opengl.git](https://github.com/biosys-corner/bioleaching-opengl.git)
-   cd bioleaching-opengl
+   git clone https://github.com/biosys-corner/bioleach-gl-core.git
+   cd bioleach-gl-core
+
 2. **Crea y activa un entorno virtual (opcional pero recomendado):**
 
     ```Bash

@@ -1,0 +1,13 @@
+# Python bytecode y caché
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Entornos virtuales (por si usas venv)
+venv/
+env/
+.env
+
+# Editores de código
+.vscode/
+.idea/

@@ -43,13 +43,21 @@ Sigue estos pasos para clonar y ejecutar la visualización en tu equipo:
    git clone https://github.com/biosys-corner/bioleach-gl-core.git
    cd bioleach-gl-core
 
-2. **Crea y activa un entorno virtual (opcional pero recomendado):**
+2. **Crea y activa un entorno virtual (recomendado):**
 
-    ```Bash
-    python -m venv venv
-    source venv/bin/activate  # En Linux/macOS
-    # venv\Scripts\activate   # En Windows
-    ```
+   **En Linux / macOS / WSL:**
+
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   ```
+
+   **En Windows (CMD o PowerShell):**
+
+   ```cmd
+   python -m venv venv
+   venv\Scripts\activate
+   ```
 
 3. **Instala las dependencias:**
 

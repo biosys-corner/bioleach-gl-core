@@ -66,6 +66,10 @@ RADIO_CONTACTO_BACTERIA = 0.65  # Distancia para detectar contacto Fe²⁺-bacte
 # Umbral para no reconstruir la malla del mineral por cambios imperceptibles
 UMBRAL_COLOR = 0.01
 
+# Desgaste localizado del mineral por contacto con Fe³⁺.
+COLOR_IMPACTO_MINERAL = np.array([0.08, 0.82, 1.00, 1.0])
+RADIO_DESGASTE_LOCAL = 0.48
+
 
 rng = np.random.default_rng()
 
@@ -234,6 +238,12 @@ class SimulacionBiolixiviacion(QWidget):
             self.colores_agotado,
         ) = generar_geometria_mineral()
 
+        # Estado independiente de desgaste para cada cara de la roca.
+        self.desgaste_caras = np.zeros(len(self.caras_mineral), dtype=float)
+
+        # Centro geométrico de cada cara, para localizar impactos.
+        self.centros_caras = self.vertices_mineral[self.caras_mineral].mean(axis=1)
+
         malla = gl.MeshData(
             vertexes=self.vertices_mineral,
             faces=self.caras_mineral,
@@ -394,11 +404,43 @@ class SimulacionBiolixiviacion(QWidget):
         )
         self.vista.addItem(self.bandeja)
 
-    def _actualizar_color_mineral(self, progreso):
-        """Interpola los colores desde mineral inicial hasta residuo.
+    def _registrar_desgaste_mineral(self, posiciones):
+        """Acumula desgaste visual en las caras cercanas a impactos de Fe³⁺."""
+        caras_afectadas = np.zeros(len(self.caras_mineral), dtype=bool)
+        intensidades = np.zeros(len(self.caras_mineral), dtype=float)
 
-        Solo reconstruye la malla si el color cambió de forma perceptible.
-        """
+        for posicion in posiciones:
+            distancias = np.linalg.norm(
+                self.centros_caras - posicion,
+                axis=1,
+            )
+
+            cerca = distancias < RADIO_DESGASTE_LOCAL
+            caras_afectadas |= cerca
+
+            # Los impactos más cercanos producen un efecto más intenso.
+            peso = np.clip(
+                1.0 - distancias / RADIO_DESGASTE_LOCAL,
+                0.0,
+                1.0,
+            )
+            intensidades = np.maximum(intensidades, peso)
+
+        if not np.any(caras_afectadas):
+            return
+
+        incremento = 0.35 * intensidades[caras_afectadas]
+        self.desgaste_caras[caras_afectadas] = np.clip(
+            self.desgaste_caras[caras_afectadas] + incremento,
+            0.0,
+            1.0,
+        )
+
+        # Fuerza el redibujado aunque el progreso global no haya cambiado.
+        self._color_aplicado = None
+
+    def _actualizar_color_mineral(self, progreso):
+        """Combina el agotamiento global con el desgaste localizado."""
         progreso = float(np.clip(progreso, 0.0, 1.0))
 
         if (
@@ -406,11 +448,19 @@ class SimulacionBiolixiviacion(QWidget):
             and abs(progreso - self._color_aplicado) < UMBRAL_COLOR
         ):
             return
+
         self._color_aplicado = progreso
 
+        # Color base: transición global del mineral al residuo.
         colores = (
             1.0 - progreso
         ) * self.colores_mineral + progreso * self.colores_agotado
+
+        # Desgaste localizado: mezcla las caras afectadas con el turquesa.
+        desgaste = self.desgaste_caras[:, np.newaxis]
+        color_impacto = COLOR_IMPACTO_MINERAL[np.newaxis, :]
+
+        colores = (1.0 - desgaste) * colores + desgaste * color_impacto
 
         malla = gl.MeshData(
             vertexes=self.vertices_mineral,
@@ -560,6 +610,8 @@ class SimulacionBiolixiviacion(QWidget):
         alcanzadas = np.flatnonzero(distancias <= r_superficie + MARGEN_CONTACTO)
 
         if alcanzadas.size:
+            # Registrar los puntos donde Fe³⁺ alcanza la superficie.
+            self._registrar_desgaste_mineral(self.pos_fe3[alcanzadas].copy())
             # Algunas partículas (no todas) se reducen a Fe²⁺ en el punto de contacto.
             azar = rng.random(alcanzadas.size)
             convierten = alcanzadas[azar < PROB_CONVERSION]
@@ -746,6 +798,11 @@ class SimulacionBiolixiviacion(QWidget):
 
         if fase == "acondicionamiento":
             # Etapa 0: solo lluvia de solución lixiviante.
+            # Preparar la calcopirita para un nuevo ciclo.
+            self.desgaste_caras[:] = 0.0
+            self._color_aplicado = None
+            self._actualizar_color_mineral(0.0)
+
             self.pos_gotas[:] = self._nuevas_gotas()
             self.gotas.setVisible(True)
 
@@ -763,7 +820,6 @@ class SimulacionBiolixiviacion(QWidget):
 
         elif fase == "activa":
             # Etapa 1: comienza la lixiviación química.
-            self._actualizar_color_mineral(0.0)
 
             self.pos_fe3[:] = self._nuevas_particulas_fe3()
             self.particulas_fe3.setVisible(True)

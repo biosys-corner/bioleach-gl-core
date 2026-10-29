@@ -13,6 +13,7 @@ se reduce a Fe²⁺ (rosa), que se aleja del mineral hacia la solución.
 """
 
 import sys
+import time
 import numpy as np
 import pyqtgraph.opengl as gl
 from PyQt6.QtCore import Qt, QTimer
@@ -34,9 +35,14 @@ DURACION_ACONDICIONAMIENTO = 3.0
 DURACION_ACTIVA = 10.0
 DURACION_AGOTADA = 7.0
 DURACION_RECARGA = 3.0
+DURACION_ELECTROOBTENCION = 8.0
 
 DURACION_CICLO = (
-    DURACION_ACONDICIONAMIENTO + DURACION_ACTIVA + DURACION_AGOTADA + DURACION_RECARGA
+    DURACION_ACONDICIONAMIENTO
+    + DURACION_ACTIVA
+    + DURACION_AGOTADA
+    + DURACION_RECARGA
+    + DURACION_ELECTROOBTENCION
 )
 
 
@@ -200,11 +206,17 @@ class SimulacionBiolixiviacion(QWidget):
             "QLabel { background-color: rgba(10, 16, 24, 225); color: #edf2f7; "
             "border: 1px solid #526273; border-radius: 9px; padding: 12px; }"
         )
-        self.leyenda.setGeometry(18, 18, 370, 360)
+        self.setMinimumSize(720, 420)
 
+        self.leyenda.setWordWrap(True)
+        self.leyenda.setFixedWidth(370)
+        self.leyenda.adjustSize()
+        self.leyenda.move(18, 18)
         self.leyenda.raise_()
 
         self.tiempo = 0.0
+        self._ultimo_frame_real = time.perf_counter()
+        self._tiempo_deposito_real = 0.0
         self.angulo_camara = 35.0
         self.fase_actual = None  # "activa" | "pausa" | "recarga"
         self._color_aplicado = None  # Último progreso de color aplicado a la malla
@@ -216,22 +228,28 @@ class SimulacionBiolixiviacion(QWidget):
         self.timer.start(FPS_MS)
 
     def resizeEvent(self, event):
-        # Mantener ambas capas ajustadas al tamaño real de la ventana.
+        # La escena 3D ocupa toda la ventana.
         self.vista.setGeometry(self.rect())
+
+        # Ajustar el ancho del panel sin pegarlo a los bordes.
+        ancho_panel = min(370, self.width() - 36)
+        self.leyenda.setFixedWidth(ancho_panel)
+
+        # Recalcular la altura según el contenido actual.
+        self.leyenda.adjustSize()
+        self.leyenda.move(18, 18)
         self.leyenda.raise_()
+
         super().resizeEvent(event)
 
     def _crear_escena(self):
-        # Rejilla horizontal y ejes de referencia.
+
+        # Rejilla horizontal de referencia.
         rejilla = gl.GLGridItem()
         rejilla.setSize(14, 14)
         rejilla.setSpacing(1, 1)
-        rejilla.translate(0, 0, -3.0)
+        rejilla.translate(0, 0, -4.0)
         self.vista.addItem(rejilla)
-
-        ejes = gl.GLAxisItem()
-        ejes.setSize(3, 3, 3)
-        self.vista.addItem(ejes)
 
         # Mineral central: malla procedural irregular.
         (
@@ -393,22 +411,170 @@ class SimulacionBiolixiviacion(QWidget):
         self.particulas_fe2.setVisible(False)  # Se muestra con la 1ª conversión
         self.vista.addItem(self.particulas_fe2)
 
-        # Bandeja conceptual inferior: destino visual de la solución cargada.
-        self.bandeja = gl.GLLinePlotItem(
-            pos=np.array(
-                [
-                    [-3.0, -2.5, -2.65],
-                    [3.0, -2.5, -2.65],
-                    [3.0, 2.5, -2.65],
-                    [-3.0, 2.5, -2.65],
-                    [-3.0, -2.5, -2.65],
-                ]
-            ),
-            color=(0.1, 0.55, 0.95, 0.85),
+        # Celda de electroobtención: geometría estática inicial.
+        # Permanecerá oculta hasta integrar esta etapa al ciclo.
+        x1, x2 = -2.8, 2.8
+        y1, y2 = -2.0, 2.0
+        z1, z2 = -2.3, 1.8
+
+        # Contorno de la cuba: aristas inferiores y superiores.
+        aristas_cuba = np.array(
+            [
+                [x1, y1, z1],
+                [x2, y1, z1],
+                [x2, y1, z1],
+                [x2, y2, z1],
+                [x2, y2, z1],
+                [x1, y2, z1],
+                [x1, y2, z1],
+                [x1, y1, z1],
+                [x1, y1, z2],
+                [x2, y1, z2],
+                [x2, y1, z2],
+                [x2, y2, z2],
+                [x2, y2, z2],
+                [x1, y2, z2],
+                [x1, y2, z2],
+                [x1, y1, z2],
+                [x1, y1, z1],
+                [x1, y1, z2],
+                [x2, y1, z1],
+                [x2, y1, z2],
+                [x2, y2, z1],
+                [x2, y2, z2],
+                [x1, y2, z1],
+                [x1, y2, z2],
+            ],
+            dtype=float,
+        )
+
+        self.cuba_electroobtencion = gl.GLLinePlotItem(
+            pos=aristas_cuba,
+            color=(0.65, 0.75, 0.82, 1.0),
+            width=2,
+            antialias=True,
+            mode="lines",
+        )
+        self.cuba_electroobtencion.setVisible(False)
+        self.vista.addItem(self.cuba_electroobtencion)
+
+        # Superficie del electrolito.
+        superficie_electrolito = np.array(
+            [
+                [x1, y1, 0.9],
+                [x2, y1, 0.9],
+                [x2, y2, 0.9],
+                [x1, y2, 0.9],
+                [x1, y1, 0.9],
+            ],
+            dtype=float,
+        )
+
+        self.superficie_electrolito = gl.GLLinePlotItem(
+            pos=superficie_electrolito,
+            color=(0.1, 0.65, 0.95, 0.9),
             width=2,
             antialias=True,
         )
-        self.vista.addItem(self.bandeja)
+        self.superficie_electrolito.setVisible(False)
+        self.vista.addItem(self.superficie_electrolito)
+
+        # Ánodo: placa gris metálica.
+        vertices_anodo = np.array(
+            [
+                [-0.95, -1.3, -1.7],
+                [-0.95, 1.3, -1.7],
+                [-0.95, 1.3, 1.2],
+                [-0.95, -1.3, 1.2],
+                [-0.95, -1.3, -1.7],
+            ],
+            dtype=float,
+        )
+
+        self.anodo_electroobtencion = gl.GLLinePlotItem(
+            pos=vertices_anodo,
+            color=(0.72, 0.76, 0.80, 1.0),
+            width=4,
+            antialias=True,
+        )
+        self.anodo_electroobtencion.setVisible(False)
+        self.vista.addItem(self.anodo_electroobtencion)
+
+        # Cátodo: placa cobriza, donde se representará
+        # la deposición del cobre recuperado.
+        vertices_catodo = np.array(
+            [
+                [0.95, -1.3, -1.7],
+                [0.95, 1.3, -1.7],
+                [0.95, 1.3, 1.2],
+                [0.95, -1.3, 1.2],
+                [0.95, -1.3, -1.7],
+            ],
+            dtype=float,
+        )
+
+        self.catodo_electroobtencion = gl.GLLinePlotItem(
+            pos=vertices_catodo,
+            color=(0.55, 0.62, 0.69, 1.0),
+            width=4,
+            antialias=True,
+        )
+        self.catodo_electroobtencion.setVisible(False)
+        self.vista.addItem(self.catodo_electroobtencion)
+
+        # Depósito de cobre metálico sobre el cátodo.
+        self.altura_maxima_deposito = 2.9
+        self.altura_deposito = 0.0
+
+        # Depósito de cobre metálico sobre el cátodo.
+        # La superficie crecerá desde abajo hacia arriba.
+        self.altura_maxima_deposito = 2.9
+        self.altura_deposito = 0.0
+
+        self.deposito_cobre = gl.GLMeshItem(
+            meshdata=gl.MeshData(
+                vertexes=np.array(
+                    [
+                        [0.98, -1.22, -1.7],
+                        [0.98, 1.22, -1.7],
+                        [0.98, 1.22, -1.7],
+                        [0.98, -1.22, -1.7],
+                    ],
+                    dtype=float,
+                ),
+                faces=np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32),
+            ),
+            color=(0.72, 0.24, 0.08, 1.0),
+            smooth=False,
+            drawEdges=True,
+            edgeColor=(1.0, 0.52, 0.22, 1.0),
+            shader="shaded",
+            glOptions="opaque",
+        )
+        self.deposito_cobre.setVisible(False)
+        self.vista.addItem(self.deposito_cobre)
+
+        # Iones Cu²⁺ de la celda: población independiente del mineral.
+        self.n_iones_electroobtencion = 28
+        self.pos_iones_electroobtencion = np.zeros(
+            (self.n_iones_electroobtencion, 3), dtype=float
+        )
+        self.iones_electroobtencion_activos = np.zeros(
+            self.n_iones_electroobtencion, dtype=bool
+        )
+
+        self.particulas_cu2_electroobtencion = gl.GLScatterPlotItem(
+            pos=self.pos_iones_electroobtencion,
+            color=np.tile(
+                np.array(COLOR_COBRE),
+                (self.n_iones_electroobtencion, 1),
+            ),
+            size=7,
+            pxMode=True,
+            glOptions="translucent",
+        )
+        self.particulas_cu2_electroobtencion.setVisible(False)
+        self.vista.addItem(self.particulas_cu2_electroobtencion)
 
     def _registrar_desgaste_mineral(self, posiciones):
         """Acumula desgaste visual en las caras cercanas a impactos de Fe³⁺."""
@@ -546,6 +712,104 @@ class SimulacionBiolixiviacion(QWidget):
             else rng.uniform(0.4, 1.8, self.n_iones)
         )
         return pos
+
+    def _nuevos_iones_electroobtencion(self, indices=None):
+        """Genera Cu²⁺ dentro del electrolito, antes de su llegada al cátodo."""
+        n = self.n_iones_electroobtencion if indices is None else len(indices)
+
+        pos = np.empty((n, 3), dtype=float)
+        pos[:, 0] = rng.uniform(-1.6, 0.35, n)
+        pos[:, 1] = rng.uniform(-1.0, 1.0, n)
+        pos[:, 2] = rng.uniform(-1.3, 0.65, n)
+        return pos
+
+    def _actualizar_deposito_cobre(self):
+        """Actualiza la altura de la placa de cobre depositado."""
+        z_inferior = -1.7
+        z_superior = z_inferior + self.altura_deposito
+
+        vertices = np.array(
+            [
+                [0.98, -1.22, z_inferior],
+                [0.98, 1.22, z_inferior],
+                [0.98, 1.22, z_superior],
+                [0.98, -1.22, z_superior],
+            ],
+            dtype=float,
+        )
+
+        caras = np.array(
+            [[0, 1, 2], [0, 2, 3]],
+            dtype=np.uint32,
+        )
+
+        self.deposito_cobre.setMeshData(
+            meshdata=gl.MeshData(vertexes=vertices, faces=caras)
+        )
+        self.deposito_cobre.setVisible(self.altura_deposito > 0.0)
+
+    def _actualizar_crecimiento_deposito(self, dt_real):
+        """Hace crecer el depósito hasta su altura máxima en 3 segundos reales."""
+        if self.altura_deposito >= self.altura_maxima_deposito:
+            return
+
+        self._tiempo_deposito_real = min(
+            3.0,
+            self._tiempo_deposito_real + dt_real,
+        )
+
+        progreso = self._tiempo_deposito_real / 3.0
+
+        self.altura_deposito = self.altura_maxima_deposito * progreso
+
+        self._actualizar_deposito_cobre()
+
+    def _paso_electroobtencion(self):
+        """Transporta Cu²⁺ hacia el cátodo y los retira al llegar."""
+        activos = self.iones_electroobtencion_activos
+
+        if not activos.any():
+            self.particulas_cu2_electroobtencion.setVisible(False)
+            return
+
+        indices = np.flatnonzero(activos)
+
+        # Migración visual hacia el cátodo situado en x = 0.95.
+        self.pos_iones_electroobtencion[indices, 0] += rng.uniform(
+            0.025, 0.045, len(indices)
+        )
+
+        # Pequeña deriva lateral y vertical para evitar trayectorias idénticas.
+        self.pos_iones_electroobtencion[indices, 1] += rng.normal(
+            0.0, 0.008, len(indices)
+        )
+        self.pos_iones_electroobtencion[indices, 2] += rng.normal(
+            0.0, 0.006, len(indices)
+        )
+
+        # El ion desaparece al alcanzar visualmente la superficie del cátodo.
+
+        alcanzados = self.pos_iones_electroobtencion[indices, 0] >= 0.82
+        n_alcanzados = int(np.count_nonzero(alcanzados))
+        self.iones_electroobtencion_activos[indices[alcanzados]] = False
+
+        if n_alcanzados:
+            incremento = self.altura_maxima_deposito / self.n_iones_electroobtencion
+            self.altura_deposito = min(
+                self.altura_maxima_deposito,
+                self.altura_deposito + n_alcanzados * incremento,
+            )
+            self._actualizar_deposito_cobre()
+
+        restantes = self.iones_electroobtencion_activos
+        self.particulas_cu2_electroobtencion.setData(
+            pos=self.pos_iones_electroobtencion[restantes],
+            color=np.tile(
+                np.array(COLOR_COBRE),
+                (int(restantes.sum()), 1),
+            ),
+        )
+        self.particulas_cu2_electroobtencion.setVisible(restantes.any())
 
     def _nuevas_particulas_fe3(self, n=None):
         """
@@ -761,35 +1025,111 @@ class SimulacionBiolixiviacion(QWidget):
     # ------------------------------------------------------------------
     # Leyenda
     # ------------------------------------------------------------------
+
     def _actualizar_leyenda(self, estado, color, progreso):
         barra = max(0.0, min(100.0, progreso * 100.0))
+
         hex_fe3 = _color_html(COLOR_FE3)
         hex_fe2 = _color_html(COLOR_FE2)
+
+        # Descripción y referencias visuales de la etapa actual.
+        if estado.startswith("ETAPA 0"):
+            descripcion = (
+                "La solución lixiviante entra en contacto con el lecho mineral."
+            )
+            elementos = (
+                '<div><span style="color:#14d1ff;">↓</span> '
+                "Solución lixiviante</div>"
+                '<div><span style="color:#c58a25;">●</span> '
+                "Mineral sulfurado</div>"
+            )
+
+        elif estado.startswith("FASE 1"):
+            descripcion = (
+                "El Fe³⁺ oxida los sulfuros; se representa "
+                "la liberación de cobre a la solución."
+            )
+            elementos = (
+                f'<div><span style="color:{hex_fe3};">●</span> '
+                "Fe³⁺ · agente oxidante</div>"
+                f'<div><span style="color:{hex_fe2};">●</span> '
+                "Fe²⁺ · hierro reducido</div>"
+                '<div><span style="color:#24ff63;">●</span> '
+                "Bacterias</div>"
+                '<div><span style="color:#ff7a29;">●</span> '
+                "Cu²⁺ · cobre solubilizado</div>"
+            )
+
+        elif estado.startswith("FASE 2"):
+            descripcion = (
+                "El lecho permanece en pausa y el mineral "
+                "se muestra visualmente empobrecido."
+            )
+            elementos = (
+                '<div><span style="color:#a2a8ad;">●</span> '
+                "Residuo mineral representado en gris</div>"
+                '<div><span style="color:#ff7a29;">●</span> '
+                "Iones de cobre remanentes</div>"
+            )
+
+        elif estado.startswith("FASE 3"):
+            descripcion = (
+                "Transición visual: se retira el residuo "
+                "y se prepara el siguiente ciclo."
+            )
+            elementos = (
+                '<div><span style="color:#c58a25;">●</span> '
+                "Mineral para el nuevo ciclo</div>"
+            )
+
+        else:
+            descripcion = (
+                "Los iones Cu²⁺ migran hacia el cátodo, "
+                "donde se representa la deposición de cobre."
+            )
+            elementos = (
+                '<div><span style="color:#ff7a29;">●</span> '
+                "Cu²⁺ · cobre en el electrolito</div>"
+                '<div><span style="color:#d5d9df;">●</span> '
+                "Cátodo y depósito de cobre</div>"
+            )
+
         self.leyenda.setText(
-            '<div style="font-family: sans-serif; font-size: 12px;">'
-            '<div style="font-size:17px; font-weight:700; color:#ffd166;">'
+            '<div style="font-family:sans-serif; font-size:12px;">'
+            '<div style="font-size:17px; font-weight:700; '
+            'color:#ffd166;">'
             "BIO LIXIVIACIÓN · MODELO 3D</div>"
-            '<div style="color:#aebdca; margin:3px 0 9px 0;">Ciclo conceptual de extracción de cobre</div>'
-            f'<div><span style="color:#24ff63;">●</span> Bacterias: actividad biológica</div>'
-            f'<div><span style="color:#14d1ff;">↓</span> Irrigación activa: solución lixiviante</div>'
-            f'<div><span style="color:{hex_fe3};">●</span> Fe³⁺: hierro férrico (oxidante)</div>'
-            f'<div><span style="color:{hex_fe2};">●</span> Fe²⁺: hierro ferroso (reducido)</div>'
-            f'<div><span style="color:#ff7a29;">●</span> Cobre solubilizado: Cu²⁺</div>'
-            f'<div><span style="color:#c58a25;">●</span> Mineral sulfurado</div>'
-            f'<div><span style="color:#a2a8ad;">●</span> Residuo empobrecido (representación)</div>'
-            '<hr style="border:0; border-top:1px solid #526273; margin:9px 0;">'
-            '<div style="font-size:11px; color:#aebdca;">ESTADO DEL PROCESO</div>'
-            f'<div style="font-size:14px; font-weight:700; color:{color}; margin:3px 0 8px 0;">{estado}</div>'
-            '<div style="height:7px; background:#263746; border-radius:3px;">'
-            f'<div style="height:7px; width:{barra:.1f}%; background:{color}; border-radius:3px;"></div></div>'
-            '<div style="font-size:10px; color:#aebdca; margin-top:7px;">'
-            "Esquema cualitativo; partículas, tiempos y colores no son datos experimentales.</div>"
+            '<div style="color:#aebdca; margin:3px 0 10px 0;">'
+            "Ciclo conceptual de extracción de cobre</div>"
+            '<div style="font-size:11px; font-weight:700; '
+            'color:#aebdca;">ETAPA ACTUAL</div>'
+            f'<div style="font-size:14px; font-weight:700; '
+            f'color:{color}; margin:3px 0 7px 0;">'
+            f"{estado}</div>"
+            f'<div style="line-height:1.4; margin-bottom:9px;">'
+            f"{descripcion}</div>"
+            f'<div style="line-height:1.7;">{elementos}</div>'
+            '<hr style="border:0; border-top:1px solid #526273; '
+            'margin:10px 0;">'
+            '<div style="font-size:11px; color:#aebdca; '
+            'margin-bottom:4px;">PROGRESO DE LA ETAPA</div>'
+            f'<div style="font-family:monospace; font-size:14px; '
+            f'letter-spacing:1px; color:{color};">'
+            f"{'█' * int(barra / 5)}{'░' * (20 - int(barra / 5))}"
+            f" {barra:.0f}%</div>"
+            "</div>"
+            '<div style="font-size:10px; color:#aebdca; '
+            'margin-top:9px;">'
+            "Modelo cualitativo: partículas, tiempos y colores "
+            "son representaciones, no datos experimentales."
+            "</div>"
             "</div>"
         )
 
     # ------------------------------------------------------------------
     # Control de fases
     # ------------------------------------------------------------------
+
     @staticmethod
     def _fase_para(t):
         if t < DURACION_ACONDICIONAMIENTO:
@@ -805,13 +1145,33 @@ class SimulacionBiolixiviacion(QWidget):
         if t < DURACION_AGOTADA:
             return "pausa"
 
-        return "recarga"
+        t -= DURACION_AGOTADA
+
+        if t < DURACION_RECARGA:
+            return "recarga"
+
+        return "electroobtencion"
 
     def _entrar_fase(self, fase):
         """Inicializa y muestra las partículas de la fase correspondiente."""
         primer_ciclo = self.fase_actual is None
 
         if fase == "acondicionamiento":
+            self.mineral.setVisible(True)
+            self.anillo.setVisible(True)
+
+            # Ocultar la celda de electroobtención al reiniciar el ciclo.
+            self.cuba_electroobtencion.setVisible(False)
+            self.superficie_electrolito.setVisible(False)
+            self.anodo_electroobtencion.setVisible(False)
+            self.catodo_electroobtencion.setVisible(False)
+            self.altura_deposito = 0.0
+            self._actualizar_deposito_cobre()
+            self.altura_deposito = 0.0
+            self.deposito_cobre.setVisible(False)
+            self.particulas_cu2_electroobtencion.setVisible(False)
+            self.iones_electroobtencion_activos[:] = False
+
             # Etapa 0: solo lluvia de solución lixiviante.
             # Preparar la calcopirita para un nuevo ciclo.
             self.desgaste_caras[:] = 0.0
@@ -876,7 +1236,7 @@ class SimulacionBiolixiviacion(QWidget):
 
             self._actualizar_color_mineral(1.0)
 
-        else:  # recarga
+        elif fase == "recarga":
             # Etapa 3: transición visual hacia el siguiente ciclo.
             self.particulas_fe3.setVisible(False)
 
@@ -890,6 +1250,41 @@ class SimulacionBiolixiviacion(QWidget):
             self.bacterias.setVisible(False)
             self.bacterias_adheridas.setVisible(False)
             self.iones.setVisible(False)
+
+        else:  # electroobtencion
+            # Etapa 4: mostrar la celda de recuperación de cobre.
+
+            # Iniciar una nueva población de Cu²⁺ en el electrolito.
+            self.pos_iones_electroobtencion[:] = self._nuevos_iones_electroobtencion()
+            self.iones_electroobtencion_activos[:] = True
+            self.particulas_cu2_electroobtencion.setData(
+                pos=self.pos_iones_electroobtencion,
+                color=np.tile(
+                    np.array(COLOR_COBRE),
+                    (self.n_iones_electroobtencion, 1),
+                ),
+            )
+            self.particulas_cu2_electroobtencion.setVisible(True)
+
+            self.mineral.setVisible(False)
+            self.anillo.setVisible(False)
+
+            self.particulas_fe3.setVisible(False)
+            self.particulas_fe2.setVisible(False)
+            self.particulas_fe3_reg.setVisible(False)
+
+            self.gotas.setVisible(False)
+            self.bacterias.setVisible(False)
+            self.bacterias_adheridas.setVisible(False)
+            self.iones.setVisible(False)
+
+            self.cuba_electroobtencion.setVisible(True)
+            self.superficie_electrolito.setVisible(True)
+            self.anodo_electroobtencion.setVisible(True)
+            self.catodo_electroobtencion.setVisible(True)
+            self._tiempo_deposito_real = 0.0
+            self.altura_deposito = 0.0
+            self._actualizar_deposito_cobre()
 
     def _mover_bacterias_libres(self):
         """Movimiento suave e irregular de las bacterias suspendidas."""
@@ -981,7 +1376,7 @@ class SimulacionBiolixiviacion(QWidget):
             self.pos_gotas[gotas_agotadas] = nuevas_gotas[gotas_agotadas]
 
         # Iones aparecen cerca del mineral y migran hacia la bandeja de solución.
-        nuevas = self.pos_iones[:, 2] < -2.3
+        nuevas = self.pos_iones[:, 2] < -3.7
         if np.any(nuevas):
             reemplazo = self._nuevos_iones()
             self.pos_iones[nuevas] = reemplazo[nuevas]
@@ -993,7 +1388,7 @@ class SimulacionBiolixiviacion(QWidget):
         # Fase 2: el lecho está en pausa; el modelo no produce más iones.
         self._mover_bacterias_libres()
         self.pos_iones[:, 2] -= 0.045
-        self.pos_iones[:, 2] = np.maximum(self.pos_iones[:, 2], -2.6)
+        self.pos_iones[:, 2] = np.maximum(self.pos_iones[:, 2], -3.7)
 
         return "FASE 2 · LECHO EN PAUSA / MINERAL EMPOBRECIDO", "#ff8585"
 
@@ -1008,6 +1403,9 @@ class SimulacionBiolixiviacion(QWidget):
         return "FASE 3 · RETIRO DE RESIDUO Y RECARGA", "#77bfff"
 
     def actualizar(self):
+        ahora = time.perf_counter()
+        dt_real = ahora - self._ultimo_frame_real
+        self._ultimo_frame_real = ahora
         self.tiempo += PASO_TIEMPO
         t = self.tiempo % DURACION_CICLO
 
@@ -1024,23 +1422,42 @@ class SimulacionBiolixiviacion(QWidget):
 
         if fase == "acondicionamiento":
             estado, color_estado = self._paso_acondicionamiento(t)
+            progreso_fase = t / DURACION_ACONDICIONAMIENTO
 
         elif fase == "activa":
             t_fase = t - DURACION_ACONDICIONAMIENTO
             estado, color_estado = self._paso_activa(t_fase)
+            progreso_fase = t_fase / DURACION_ACTIVA
 
         elif fase == "pausa":
             t_fase = t - DURACION_ACONDICIONAMIENTO - DURACION_ACTIVA
             estado, color_estado = self._paso_pausa(t_fase)
+            progreso_fase = t_fase / DURACION_AGOTADA
 
-        else:
+        elif fase == "recarga":
             t_fase = t - DURACION_ACONDICIONAMIENTO - DURACION_ACTIVA - DURACION_AGOTADA
             estado, color_estado = self._paso_recarga(t_fase)
+            progreso_fase = t_fase / DURACION_RECARGA
+
+        else:
+            t_fase = (
+                t
+                - DURACION_ACONDICIONAMIENTO
+                - DURACION_ACTIVA
+                - DURACION_AGOTADA
+                - DURACION_RECARGA
+            )
+            estado = "ETAPA 4 · ELECTROOBTENCIÓN DE COBRE"
+            color_estado = "#ff9b52"
+            progreso_fase = t_fase / DURACION_ELECTROOBTENCION
+        self._actualizar_crecimiento_deposito(dt_real)
+
+        self._paso_electroobtencion()
 
         self.bacterias.setData(pos=self.pos_bacterias)
         self.iones.setData(pos=self.pos_iones)
         self.gotas.setData(pos=self.pos_gotas)
-        self._actualizar_leyenda(estado, color_estado, t / DURACION_CICLO)
+        self._actualizar_leyenda(estado, color_estado, progreso_fase)
 
 
 def main():

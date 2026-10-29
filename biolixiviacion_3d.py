@@ -66,6 +66,9 @@ RADIO_CONTACTO_BACTERIA = 0.65  # Distancia para detectar contacto Fe²⁺-bacte
 # Umbral para no reconstruir la malla del mineral por cambios imperceptibles
 UMBRAL_COLOR = 0.01
 
+# Fracción del desgaste turquesa que permanece en cada fotograma.
+FACTOR_DESVANECIMIENTO = 0.997
+
 # Desgaste localizado del mineral por contacto con Fe³⁺.
 COLOR_IMPACTO_MINERAL = np.array([0.08, 0.82, 1.00, 1.0])
 RADIO_DESGASTE_LOCAL = 0.48
@@ -240,6 +243,9 @@ class SimulacionBiolixiviacion(QWidget):
 
         # Estado independiente de desgaste para cada cara de la roca.
         self.desgaste_caras = np.zeros(len(self.caras_mineral), dtype=float)
+
+        # Estado del desgaste localizado en el último redibujado.
+        self._desgaste_aplicado = None
 
         # Centro geométrico de cada cara, para localizar impactos.
         self.centros_caras = self.vertices_mineral[self.caras_mineral].mean(axis=1)
@@ -443,13 +449,22 @@ class SimulacionBiolixiviacion(QWidget):
         """Combina el agotamiento global con el desgaste localizado."""
         progreso = float(np.clip(progreso, 0.0, 1.0))
 
+        desgaste_sin_cambios = (
+            self._desgaste_aplicado is not None
+            and np.max(np.abs(self.desgaste_caras - self._desgaste_aplicado))
+            < UMBRAL_COLOR
+        )
+
         if (
             self._color_aplicado is not None
             and abs(progreso - self._color_aplicado) < UMBRAL_COLOR
+            and desgaste_sin_cambios
         ):
             return
 
         self._color_aplicado = progreso
+
+        self._desgaste_aplicado = self.desgaste_caras.copy()
 
         # Color base: transición global del mineral al residuo.
         colores = (
@@ -997,8 +1012,14 @@ class SimulacionBiolixiviacion(QWidget):
         t = self.tiempo % DURACION_CICLO
 
         fase = self._fase_para(t)
+
+        # Desvanecer las marcas turquesa con el paso del tiempo.
+        if fase != "acondicionamiento" and np.any(self.desgaste_caras > 0):
+            self.desgaste_caras *= FACTOR_DESVANECIMIENTO
+
         if fase != self.fase_actual:
             self._entrar_fase(fase)
+
             self.fase_actual = fase
 
         if fase == "acondicionamiento":

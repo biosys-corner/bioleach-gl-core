@@ -67,7 +67,7 @@ RADIO_CONTACTO_BACTERIA = 0.65  # Distancia para detectar contacto Fe²⁺-bacte
 UMBRAL_COLOR = 0.01
 
 # Fracción del desgaste turquesa que permanece en cada fotograma.
-FACTOR_DESVANECIMIENTO = 0.997
+FACTOR_DESVANECIMIENTO = 0.994
 
 # Desgaste localizado del mineral por contacto con Fe³⁺.
 COLOR_IMPACTO_MINERAL = np.array([0.08, 0.82, 1.00, 1.0])

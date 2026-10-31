@@ -1,5 +1,9 @@
 # Bioleach-gl-core · Gráfico Divulgativo Conceptual (PyOpenGL)
 
+<p align="center">
+  <img src="salida_biotech.gif" alt="Simulación interactiva 3D de Biolixiviación" width="100%">
+</p>
+
 Este proyecto es una **representación gráfica, didáctica y divulgativa** en **Python** y **PyOpenGL** del proceso hidrometalúrgico de **biolixiviación de calcopirita** ($\text{CuFeS}_2$).
 
 Creado con un enfoque visual ligero, código limpio y alta compatibilidad, este script busca comunicar de manera intuitiva los fundamentos microbianos y químicos de la extracción de cobre.
@@ -71,7 +75,7 @@ Sigue estos pasos para clonar y ejecutar la visualización en tu equipo:
     python biolixiviacion_3d.py
     ```
 
-# Roadmap / Próximas Versiones (v0.2+)
+# Roadmap / Próximas Versiones
 
 El proyecto evoluciona de manera orgánica. Las próximas características planeadas incluyen:
 
